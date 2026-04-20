@@ -1,0 +1,347 @@
+{
+  "name": "API4.AI",
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "xyz",
+        "formDescription": "data",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "image",
+              "fieldType": "file"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.3,
+      "position": [
+        560,
+        32
+      ],
+      "id": "55b5df7d-aad4-4d85-b45a-a8a792e5f05e",
+      "name": "On form submission",
+      "webhookId": "<REDACTED_WEBHOOK_ID>"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-flash",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-flash"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=You are an expert English language checker analyzing text extracted from an image via OCR.\n\nAnalyze the following OCR text for errors and return ONLY a valid JSON object (no markdown, no explanations, no preamble).\n\nOCR Text:\n{{ $json.results[0].entities[0].objects[0].entities[0].text }}\n\nReturn this EXACT JSON structure:\n{\n  \"errors_detected\": [\n    {\n      \"error_type\": \"spelling|grammar|punctuation|spacing|consistency\",\n      \"original_text\": \"exact text with error\",\n      \"corrected_text\": \"corrected version\",\n      \"location\": \"approximate location in text\",\n      \"severity\": \"high|medium|low\",\n      \"explanation\": \"brief explanation of the error\"\n    }\n  ],\n  \"summary\": {\n    \"total_errors\": 0,\n    \"spelling_errors\": 0,\n    \"grammar_errors\": 0,\n    \"punctuation_errors\": 0,\n    \"spacing_errors\": 0,\n    \"consistency_errors\": 0\n  },\n  \"image_metadata\": {\n    \"total_text_blocks\": 1,\n    \"text_quality\": \"high|medium|low\"\n  }\n}\n\nRules:\n- Return ONLY valid JSON, no markdown code blocks\n- Include all error types: spelling, grammar, punctuation, spacing, consistency\n- Be thorough but accurate\n- If no errors found, return empty errors_detected array\n- Focus on real English language errors, not OCR artifacts"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "position": [
+        1856,
+        48
+      ],
+      "id": "3c0c430b-35ed-4b6e-bb44-409606b5eeb3",
+      "name": "Message a model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "<REDACTED_CREDENTIAL_ID>", "name": "<REDACTED_CREDENTIAL_NAME>"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return [$input.first()];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1408,
+        48
+      ],
+      "id": "53382b73-d010-4272-9f7e-c65fa27da931",
+      "name": "Parse Google Vision Response1",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Gemini response and extract errors\nconst item = $input.first().json;\n\nlet rawText = \"\";\n\n// Extract text from various possible structures\nif (item.content?.parts?.[0]?.text) {\n  rawText = item.content.parts[0].text;\n} else if (item.candidates?.[0]?.content?.parts?.[0]?.text) {\n  rawText = item.candidates[0].content.parts[0].text;\n} else if (typeof item === 'string') {\n  rawText = item;\n} else {\n  rawText = JSON.stringify(item);\n}\n\n// Clean markdown fences\nrawText = rawText.replace(/```json|```/g, '').trim();\n\n// Parse JSON\nlet parsed;\ntry {\n  parsed = JSON.parse(rawText);\n} catch (e) {\n  console.error('Parse error:', e.message);\n  return [{\n    json: {\n      error: 'Failed to parse Gemini output',\n      raw_preview: rawText.substring(0, 500)\n    }\n  }];\n}\n\nconst errors = parsed.errors_detected || [];\nconst summary = parsed.summary || {};\nconst metadata = parsed.image_metadata || {};\n\nreturn [{\n  json: {\n    parsed_response: parsed,\n    errors: errors,\n    summary: summary,\n    metadata: metadata,\n    total_errors: errors.length\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2208,
+        48
+      ],
+      "id": "d19ecf52-04f1-4623-90df-56cffdae9d7b",
+      "name": "Parse Gemini Response1",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first();\nconst base64Image = item.json.base64Image;\n\n// Send FULL image 3 times with focus instructions\nconst regions = [\n  {\n    json: {\n      base64Image: base64Image,\n      mimeType: item.json.mimeType,\n      fileName: item.json.fileName,\n      region: 'section_1',\n      focusArea: 'top_third'\n    }\n  },\n  {\n    json: {\n      base64Image: base64Image,\n      mimeType: item.json.mimeType,\n      fileName: item.json.fileName,\n      region: 'section_2',\n      focusArea: 'middle_third'\n    }\n  },\n  {\n    json: {\n      base64Image: base64Image,\n      mimeType: item.json.mimeType,\n      fileName: item.json.fileName,\n      region: 'section_3',\n      focusArea: 'bottom_third'\n    }\n  }\n];\n\nreturn regions;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        272
+      ],
+      "id": "d4f55cdb-78de-4490-aa9d-f758697fe3e5",
+      "name": "Image Split1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Try to get execution ID from the Generate Execution ID node\nlet executionId;\n\ntry {\n  executionId = $('Generate Execution ID').first().json.executionId;\n} catch (e) {\n  // Fallback: generate one here if the node didn't execute\n  const crypto = require('crypto');\n  executionId = crypto.randomUUID();\n  console.log('Generated fallback execution ID:', executionId);\n}\n\nconst crypto = require('crypto');\nconst inputItem = $input.first().json;\nconst errors = inputItem.errors || [];\n\n// If no errors, return empty array\nif (errors.length === 0) {\n  return [];\n}\n\n// Split each error into a separate item with its own error_id\nreturn errors.map((error, index) => ({\n  json: {\n    executionId: executionId,\n    error_id: crypto.randomUUID(), // Unique ID for each error\n    error_type: error.error_type || 'unknown',\n    found_text: error.original_text || '',\n    correction: error.corrected_text || '',\n    panel_zone: error.location || '',\n    issue_description: error.explanation || '',\n    confidence: error.severity === 'high' ? '0.9' : error.severity === 'medium' ? '0.7' : '0.5',\n    coordinates: error.coordinates || null,\n    bbox: error.bbox || null,\n    severity: error.severity || 'medium'\n  }\n}));"
+      },
+      "id": "124216b0-0b3d-4afb-a94c-2acb18e494a4",
+      "name": "Add Execution ID to Errors1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2464,
+        48
+      ]
+    },
+    {
+      "parameters": {
+        "tableId": "ocr_table",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "executionId",
+              "fieldValue": "=\"{{ $json.executionId }}\""
+            },
+            {
+              "fieldId": "found_text",
+              "fieldValue": "=\"{{ $json.found_text }}\""
+            },
+            {
+              "fieldId": "error_type",
+              "fieldValue": "=\"{{$json.error_type}}\""
+            },
+            {
+              "fieldId": "issue_description",
+              "fieldValue": "=\"{{ $json.issue_description }}\""
+            },
+            {
+              "fieldId": "correction",
+              "fieldValue": "=\"{{ $json.correction }}\""
+            },
+            {
+              "fieldId": "executionId",
+              "fieldValue": "=\"{{ $json.executionId }}\""
+            },
+            {
+              "fieldId": "panel_zone",
+              "fieldValue": "=\"{{ $json.panel_zone }}\""
+            },
+            {
+              "fieldId": "confidence",
+              "fieldValue": "=\"{{ $json.confidence }}\""
+            },
+            {
+              "fieldId": "error_id",
+              "fieldValue": "=\"{{ $json.error_id }}\""
+            },
+            {
+              "fieldId": "coordinates",
+              "fieldValue": "=\"{{ $json.coordinates }}\""
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        2656,
+        48
+      ],
+      "id": "eeaa2526-b130-43ff-8fbc-3ed222b29687",
+      "name": "Create a row1",
+      "credentials": {
+        "supabaseApi": {
+          "id": "<REDACTED_CREDENTIAL_ID>", "name": "<REDACTED_CREDENTIAL_NAME>"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## Currently working google cloud vision flow"
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        1088,
+        256
+      ],
+      "typeVersion": 1,
+      "id": "7faeb2ea-8484-4d7a-954e-1a9372678b88",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first();\nconst binaryPropertyName = Object.keys(item.binary)[0] || 'data';\nconst binaryData = item.binary[binaryPropertyName];\nconst buffer = await this.helpers.getBinaryDataBuffer(0, binaryPropertyName);\nconst base64String = buffer.toString('base64');\n\nreturn [{\n  json: {\n    base64Image: base64String,\n    mimeType: binaryData.mimeType || 'image/jpeg',\n    fileName: binaryData.fileName || 'image.jpg'\n  },\n  binary: {\n    data: binaryData  // ← Explicitly named as 'data' to match api4.ai's input field name\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        848,
+        64
+      ],
+      "id": "060a9a0a-d704-4a11-8584-043c608cc97e",
+      "name": "Code in JavaScript3"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\nlet extractedText = [];\n\nitems.forEach(item => {\n  // Access api4.ai response directly\n  if (item.json && item.json.results && Array.isArray(item.json.results)) {\n    item.json.results.forEach(result => {\n      if (result.entities && Array.isArray(result.entities)) {\n        result.entities.forEach(entity => {\n          if (entity.kind === 'text' && entity.text) {\n            extractedText.push(entity.text);\n          }\n        });\n      }\n    });\n  }\n});\n\nreturn [{\n  json: {\n    combinedOCR: {\n      fullText: extractedText.join('\\n\\n'),\n      blocks: [],\n      totalBlocks: 1\n    }\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1568,
+        -224
+      ],
+      "id": "8db8be33-112c-45a8-a64d-1fd065223057",
+      "name": "Combine ALL2",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://demo.api4ai.cloud/ocr/v1/results",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer <API4AI_API_KEY>"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "image",
+              "inputDataFieldName": "data"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1184,
+        48
+      ],
+      "id": "11b77731-a4de-4e77-bfd1-6d509a4c2828",
+      "name": "api4.ai",
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3
+    }
+  ],
+  "connections": {
+    "Message a model": {
+      "main": [
+        [
+          {
+            "node": "Parse Gemini Response1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Google Vision Response1": {
+      "main": [
+        [
+          {
+            "node": "Message a model",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Gemini Response1": {
+      "main": [
+        [
+          {
+            "node": "Add Execution ID to Errors1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add Execution ID to Errors1": {
+      "main": [
+        [
+          {
+            "node": "Create a row1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript3": {
+      "main": [
+        [
+          {
+            "node": "api4.ai",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Combine ALL2": {
+      "main": [
+        []
+      ]
+    },
+    "On form submission": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "api4.ai": {
+      "main": [
+        [
+          {
+            "node": "Parse Google Vision Response1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "pinData": {},
+  "triggerCount": 1,
+  "meta": null
+}
